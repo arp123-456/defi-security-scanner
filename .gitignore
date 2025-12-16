@@ -1,0 +1,57 @@
+# Foundry
+cache/
+out/
+broadcast/
+lcov.info
+
+# Reports
+reports/
+temp/
+all-reports/
+*.log
+
+# Node
+node_modules/
+package-lock.json
+yarn.lock
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets
+.env
+.env.local
+secrets.json
+
+# Build artifacts
+*.abi
+*.bin
+artifacts/
+typechain/
+typechain-types/
+
+# Coverage
+coverage/
+coverage.json
+.coverage
+
+# Slither
+slither.db.json
+crytic-export/
