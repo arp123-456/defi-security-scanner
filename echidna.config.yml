@@ -1,0 +1,52 @@
+# Echidna Configuration for DeFi Security Testing
+
+# Test execution settings
+testLimit: 50000
+testMode: assertion
+shrinkLimit: 5000
+timeout: 600
+
+# Coverage settings
+coverage: true
+corpusDir: "corpus"
+
+# Fuzzing strategy
+seqLen: 100
+contractAddr: "0x00a329c0648769a73afac7f9381e08fb43dbea72"
+
+# Gas settings
+gasLimit: 12500000
+gasPrice: 20000000000
+
+# RPC settings (for stateful testing)
+rpcUrl: "http://localhost:8545"
+rpcBlock: latest
+
+# Solver settings
+solver: z3
+cryticArgs: ["--solc-disable-warnings"]
+
+# Output settings
+format: text
+quiet: false
+
+# Property testing
+checkAsserts: true
+testDestruct: true
+
+# Filters
+filterBlacklist: true
+filterFunctions: []
+filterContracts: []
+
+# Advanced settings
+multi-abi: false
+allContracts: false
+deployer: "0x30000"
+sender: ["0x10000", "0x20000", "0x30000"]
+balanceAddr: 0xffffffff
+balanceContract: 0
+
+# Optimization
+shrinkMode: "one"
+seed: null
