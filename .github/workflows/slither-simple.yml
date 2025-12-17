@@ -1,0 +1,254 @@
+name: Slither Security Scan (Simplified)
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  slither-analysis:
+    name: Slither Analysis - ${{ matrix.protocol.name }}
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    
+    strategy:
+      fail-fast: false
+      matrix:
+        protocol:
+          - name: compound
+            repo: compound-finance/compound-protocol
+            solc: "0.8.10"
+            path: "contracts"
+          
+          - name: uniswap-v4
+            repo: Uniswap/v4-core
+            solc: "0.8.26"
+            path: "src"
+    
+    steps:
+      - name: Checkout Scanner Repo
+        uses: actions/checkout@v4
+      
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install Slither and Solc
+        run: |
+          pip3 install slither-analyzer
+          pip3 install solc-select
+          solc-select install ${{ matrix.protocol.solc }}
+          solc-select use ${{ matrix.protocol.solc }}
+          slither --version
+          solc --version
+      
+      - name: Clone Protocol Repository
+        run: |
+          echo "Cloning ${{ matrix.protocol.repo }}..."
+          git clone --depth 1 https://github.com/${{ matrix.protocol.repo }} protocol-repo
+          cd protocol-repo
+          echo "Repository cloned successfully"
+          ls -la
+      
+      - name: Install Protocol Dependencies
+        continue-on-error: true
+        run: |
+          cd protocol-repo
+          
+          # Try npm/yarn
+          if [ -f "package.json" ]; then
+            echo "Installing npm dependencies..."
+            npm install --legacy-peer-deps || yarn install || echo "npm/yarn install failed, continuing..."
+          fi
+          
+          # Try forge
+          if [ -f "foundry.toml" ]; then
+            echo "Installing forge dependencies..."
+            forge install || echo "forge install failed, continuing..."
+          fi
+      
+      - name: Run Slither Analysis
+        continue-on-error: true
+        run: |
+          cd protocol-repo
+          mkdir -p ../reports
+          
+          echo "Running Slither on ${{ matrix.protocol.name }}..."
+          
+          # Run Slither with basic detectors
+          slither ${{ matrix.protocol.path }} \
+            --json ../reports/slither-full.json \
+            --checklist \
+            --markdown-root ../reports/ \
+            2>&1 | tee ../reports/slither-output.txt || echo "Slither completed with findings"
+          
+          # Generate summary
+          echo "# Slither Analysis: ${{ matrix.protocol.name }}" > ../reports/SUMMARY.md
+          echo "" >> ../reports/SUMMARY.md
+          echo "**Repository:** https://github.com/${{ matrix.protocol.repo }}" >> ../reports/SUMMARY.md
+          echo "**Solidity Version:** ${{ matrix.protocol.solc }}" >> ../reports/SUMMARY.md
+          echo "**Analysis Date:** $(date)" >> ../reports/SUMMARY.md
+          echo "" >> ../reports/SUMMARY.md
+          echo "## Output" >> ../reports/SUMMARY.md
+          echo "\`\`\`" >> ../reports/SUMMARY.md
+          tail -100 ../reports/slither-output.txt >> ../reports/SUMMARY.md
+          echo "\`\`\`" >> ../reports/SUMMARY.md
+      
+      - name: Parse Results
+        if: always()
+        run: |
+          cd reports
+          
+          # Count findings if JSON exists
+          if [ -f "slither-full.json" ]; then
+            echo "Parsing Slither results..."
+            python3 << 'EOF'
+import json
+import os
+
+try:
+    with open('slither-full.json') as f:
+        data = json.load(f)
+    
+    detectors = data.get('results', {}).get('detectors', [])
+    
+    # Count by severity
+    high = sum(1 for d in detectors if d.get('impact') == 'High')
+    medium = sum(1 for d in detectors if d.get('impact') == 'Medium')
+    low = sum(1 for d in detectors if d.get('impact') == 'Low')
+    info = sum(1 for d in detectors if d.get('impact') == 'Informational')
+    
+    # Create summary
+    with open('findings-summary.txt', 'w') as f:
+        f.write(f"Total Findings: {len(detectors)}\n")
+        f.write(f"High: {high}\n")
+        f.write(f"Medium: {medium}\n")
+        f.write(f"Low: {low}\n")
+        f.write(f"Informational: {info}\n")
+    
+    print(f"✅ Found {len(detectors)} issues")
+    print(f"   🔴 High: {high}")
+    print(f"   🟡 Medium: {medium}")
+    print(f"   🟢 Low: {low}")
+    print(f"   ℹ️  Info: {info}")
+    
+except Exception as e:
+    print(f"⚠️  Could not parse results: {e}")
+    with open('findings-summary.txt', 'w') as f:
+        f.write("Analysis completed but results could not be parsed\n")
+EOF
+          else
+            echo "No JSON output found"
+            echo "Analysis may have failed - check logs" > findings-summary.txt
+          fi
+      
+      - name: Upload Reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: slither-report-${{ matrix.protocol.name }}
+          path: reports/
+          retention-days: 30
+      
+      - name: Comment Summary
+        if: always()
+        run: |
+          echo "## 📊 Slither Analysis Complete: ${{ matrix.protocol.name }}"
+          echo ""
+          if [ -f "reports/findings-summary.txt" ]; then
+            cat reports/findings-summary.txt
+          else
+            echo "⚠️ No summary available"
+          fi
+          echo ""
+          echo "📎 Download full report from workflow artifacts"
+
+  consolidate-results:
+    name: Consolidate All Results
+    runs-on: ubuntu-latest
+    needs: [slither-analysis]
+    if: always()
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Download All Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: all-reports
+      
+      - name: Generate Consolidated Report
+        run: |
+          echo "# 🔒 DeFi Security Scan Results" > CONSOLIDATED_REPORT.md
+          echo "" >> CONSOLIDATED_REPORT.md
+          echo "**Scan Date:** $(date)" >> CONSOLIDATED_REPORT.md
+          echo "**Workflow:** ${{ github.workflow }}" >> CONSOLIDATED_REPORT.md
+          echo "**Run:** #${{ github.run_number }}" >> CONSOLIDATED_REPORT.md
+          echo "" >> CONSOLIDATED_REPORT.md
+          echo "---" >> CONSOLIDATED_REPORT.md
+          echo "" >> CONSOLIDATED_REPORT.md
+          
+          # Process each protocol
+          for dir in all-reports/slither-report-*; do
+            if [ -d "$dir" ]; then
+              protocol=$(basename "$dir" | sed 's/slither-report-//')
+              echo "## 📊 $protocol" >> CONSOLIDATED_REPORT.md
+              echo "" >> CONSOLIDATED_REPORT.md
+              
+              if [ -f "$dir/findings-summary.txt" ]; then
+                echo "\`\`\`" >> CONSOLIDATED_REPORT.md
+                cat "$dir/findings-summary.txt" >> CONSOLIDATED_REPORT.md
+                echo "\`\`\`" >> CONSOLIDATED_REPORT.md
+              else
+                echo "⚠️ No summary available" >> CONSOLIDATED_REPORT.md
+              fi
+              
+              echo "" >> CONSOLIDATED_REPORT.md
+              echo "---" >> CONSOLIDATED_REPORT.md
+              echo "" >> CONSOLIDATED_REPORT.md
+            fi
+          done
+          
+          echo "## 📎 Detailed Reports" >> CONSOLIDATED_REPORT.md
+          echo "" >> CONSOLIDATED_REPORT.md
+          echo "Download individual protocol reports from workflow artifacts." >> CONSOLIDATED_REPORT.md
+          
+          cat CONSOLIDATED_REPORT.md
+      
+      - name: Upload Consolidated Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: consolidated-report
+          path: CONSOLIDATED_REPORT.md
+          retention-days: 90
+      
+      - name: Job Summary
+        if: always()
+        run: |
+          echo "## ✅ Security Scan Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Add summary for each protocol
+          for dir in all-reports/slither-report-*; do
+            if [ -d "$dir" ]; then
+              protocol=$(basename "$dir" | sed 's/slither-report-//')
+              echo "#### $protocol" >> $GITHUB_STEP_SUMMARY
+              
+              if [ -f "$dir/findings-summary.txt" ]; then
+                echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+                cat "$dir/findings-summary.txt" >> $GITHUB_STEP_SUMMARY
+                echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+              fi
+              
+              echo "" >> $GITHUB_STEP_SUMMARY
+            fi
+          done
+          
+          echo "### 📥 Download Reports" >> $GITHUB_STEP_SUMMARY
+          echo "Check the **Artifacts** section below for detailed reports." >> $GITHUB_STEP_SUMMARY
